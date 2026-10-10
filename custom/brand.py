@@ -56,23 +56,41 @@ def main():
          f"pub const RS_PUB_KEY: &str = {rust_str(BRAND['server_key'])};", regex=True)
 
     # Fixed settings, applied in every process before anything reads the config.
-    hard = ""
+    # The address book, device groups and account login need the Pro API server.
+    settings = {
+        "OVERWRITE_SETTINGS": {
+            "custom-rendezvous-server": BRAND["rendezvous_server"],
+            "key": BRAND["server_key"],
+        },
+        "HARD_SETTINGS": {"disable-ab": "Y", "disable-account": "Y"},
+        "BUILTIN_SETTINGS": {
+            "hide-server-settings": "Y",
+            "hide-websocket-settings": "Y",
+            "hide-powered-by-me": "Y",
+        },
+    }
     if variant == "kunde":
-        hard = ('    config::HARD_SETTINGS.write().unwrap()\n'
-                '        .insert("conn-type".to_owned(), "incoming".to_owned());\n')
+        settings["HARD_SETTINGS"]["conn-type"] = "incoming"
+        settings["BUILTIN_SETTINGS"]["hide-network-settings"] = "Y"
+    inserts = "".join(
+        f"    config::{target}.write().unwrap().insert({rust_str(k)}.to_owned(), {rust_str(v)}.to_owned());\n"
+        for target, values in settings.items() for k, v in values.items())
     common = "src/common.rs"
     edit(common, "pub fn load_custom_client() {\n",
          "pub fn load_custom_client() {\n    apply_builtin_client_config();\n")
     with open(ROOT / common, "a", encoding="utf-8", newline="") as f:
-        f.write(
-            "\n// Added by custom/brand.py\n"
-            "fn apply_builtin_client_config() {\n"
-            "    let mut settings = config::OVERWRITE_SETTINGS.write().unwrap();\n"
-            f'    settings.insert("custom-rendezvous-server".to_owned(), {rust_str(BRAND["rendezvous_server"])}.to_owned());\n'
-            f'    settings.insert("key".to_owned(), {rust_str(BRAND["server_key"])}.to_owned());\n'
-            "    drop(settings);\n"
-            f"{hard}"
-            "}\n")
+        f.write(f"\n// Added by custom/brand.py\nfn apply_builtin_client_config() {{\n{inserts}}}\n")
+
+    # Brand colors in place of the stock blue.
+    accent, button = BRAND["accent_color"], BRAND["button_color"]
+    dart = "flutter/lib/common.dart"
+    edit(dart, "static const Color accent = Color(0xFF0071FF);", f"static const Color accent = Color(0xFF{accent});")
+    edit(dart, "static const Color accent50 = Color(0x770071FF);", f"static const Color accent50 = Color(0x77{accent});")
+    edit(dart, "static const Color accent80 = Color(0xAA0071FF);", f"static const Color accent80 = Color(0xAA{accent});")
+    edit(dart, "static const Color idColor = Color(0xFF00B6F0);", f"static const Color idColor = Color(0xFF{button});")
+    edit(dart, "static const Color button = Color(0xFF2C8CFF);", f"static const Color button = Color(0xFF{button});")
+    edit(dart, "  return Color(0xFF2C8CFF);", f"  return Color(0xFF{button});")
+    edit(dart, "primary: Colors.blue,", "primary: accent,", count=2)
 
     # Windows version resources (shown in Explorer, Task Manager and the UAC prompt).
     rc = "flutter/windows/runner/Runner.rc"
