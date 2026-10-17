@@ -92,6 +92,40 @@ def main():
     edit(dart, "  return Color(0xFF2C8CFF);", f"  return Color(0xFF{button});")
     edit(dart, "primary: Colors.blue,", "primary: accent,", count=2)
 
+    # Customer variant on macOS: ask for screen recording, then accessibility, on every
+    # start until granted, and open the matching System Settings pane each time.
+    if variant == "kunde":
+        home = "flutter/lib/desktop/pages/desktop_home_page.dart"
+        edit(home, "  @override\n  void initState() {\n",
+             "  bool _nrAskedScreen = false;\n"
+             "  bool _nrAskedAcc = false;\n"
+             "\n"
+             "  void _nrAutoPermissions() {\n"
+             "    if (!isMacOS || bind.isOutgoingOnly()) return;\n"
+             "    if (!bind.mainIsCanScreenRecording(prompt: false)) {\n"
+             "      if (!_nrAskedScreen) {\n"
+             "        _nrAskedScreen = true;\n"
+             "        bind.mainIsCanScreenRecording(prompt: true);\n"
+             "        launchUrl(Uri.parse(\n"
+             "            'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'));\n"
+             "        watchIsCanScreenRecording = true;\n"
+             "      }\n"
+             "      return;\n"
+             "    }\n"
+             "    if (!_nrAskedAcc && !bind.mainIsProcessTrusted(prompt: false)) {\n"
+             "      _nrAskedAcc = true;\n"
+             "      bind.mainIsProcessTrusted(prompt: true);\n"
+             "      launchUrl(Uri.parse(\n"
+             "          'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'));\n"
+             "      watchIsProcessTrust = true;\n"
+             "    }\n"
+             "  }\n"
+             "\n"
+             "  @override\n  void initState() {\n")
+        edit(home, "    _updateTimer = periodic_immediate(const Duration(seconds: 1), () async {\n",
+             "    _updateTimer = periodic_immediate(const Duration(seconds: 1), () async {\n"
+             "      _nrAutoPermissions();\n")
+
     # Windows version resources (shown in Explorer, Task Manager and the UAC prompt).
     rc = "flutter/windows/runner/Runner.rc"
     edit(rc, 'VALUE "FileDescription", "RustDesk Remote Desktop"', f'VALUE "FileDescription", "{display}"')
