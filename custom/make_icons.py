@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""Render every icon/logo file the client needs from custom/brand-src/.
+"""Render every icon/logo file the client needs from custom/brands/<brand>/brand-src/.
 
-Output goes to custom/overlay/, which mirrors the repo layout; brand.py copies
-it over the sources at build time. Run on macOS (needs Pillow and iconutil):
+Output goes to custom/brands/<brand>/overlay/, which mirrors the repo layout; brand.py
+copies it over the sources at build time. Run on macOS (needs Pillow and iconutil):
 
-    python3 custom/make_icons.py
+    python3 custom/make_icons.py netcotel
+
+icon.png is either a mark on a transparent background or an opaque square tile
+(mark already on its background color). logo.png has dark text on transparent; if
+it stacks mark, wordmark and slogan, only the wordmark band is used.
 """
+import argparse
 import shutil
 import subprocess
 import tempfile
@@ -14,12 +19,34 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 HERE = Path(__file__).resolve().parent
-OUT = HERE / "overlay"
 
 
 def load_cropped(path):
     im = Image.open(path).convert("RGBA")
     return im.crop(im.getchannel("A").getbbox())
+
+
+def is_tile(im):
+    return im.getchannel("A").getextrema()[0] == 255
+
+
+def rounded(im, radius=0.2237):
+    mask = Image.new("L", im.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, im.width - 1, im.height - 1), round(im.width * radius), fill=255)
+    out = im.copy()
+    out.putalpha(mask)
+    return out
+
+
+def glyph(tile):
+    """The mark inside a tile, as opaque pixels on transparent (alpha from distance to the background)."""
+    bg = tile.getpixel((tile.width // 2, 2))[:3]
+    alpha = Image.new("L", tile.size)
+    alpha.putdata([min(255, max(abs(c - b) for c, b in zip(p[:3], bg)) * 2) if p[3] else 0
+                   for p in tile.getdata()])
+    out = tile.copy()
+    out.putalpha(alpha)
+    return out.crop(alpha.getbbox())
 
 
 def scaled(im, size):
@@ -59,6 +86,14 @@ def mac_tile(mark, size=1024):
     return canvas
 
 
+def mac_framed(tile, size=1024):
+    """macOS style icon from a tile that already has its background: just the standard margin."""
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    t = fit(tile, size - 2 * round(size * 0.098), size - 2 * round(size * 0.098))
+    canvas.alpha_composite(t, ((size - t.width) // 2, (size - t.height) // 2))
+    return canvas
+
+
 def silhouette(mark, size, color):
     sq = boost_alpha(square(mark, size, pad=0.03), 2.2)
     flat = Image.new("RGBA", sq.size, color + (0,))
@@ -84,7 +119,8 @@ def bands(im):
 def wordmark_logo(mark, logo, dark):
     """Horizontal logo for the home screen (shown at max 300x60, rendered at 2x)."""
     spans = bands(logo)
-    top, bottom = spans[1]
+    stacked = len(spans) == 3
+    top, bottom = spans[1] if stacked else (0, logo.height)
     word = logo.crop((0, top, logo.width, bottom))
     word = word.crop(word.getchannel("A").getbbox())
     if dark:
@@ -96,7 +132,8 @@ def wordmark_logo(mark, logo, dark):
                     px[x, y] = (255, 255, 255, a)
     height = 120
     m = fit(mark, 10 ** 6, height)
-    w = fit(word, 10 ** 6, round(height * 0.42))
+    # a whole logo (wordmark plus its own subline) needs more height than a single line
+    w = fit(word, 10 ** 6, round(height * (0.42 if stacked else 0.75)))
     gap = 28
     canvas = Image.new("RGBA", (m.width + gap + w.width, height), (0, 0, 0, 0))
     canvas.alpha_composite(m, (0, 0))
@@ -112,8 +149,18 @@ def save(im, rel, **kw):
 
 
 def main():
-    mark = load_cropped(HERE / "brand-src/icon.png")
-    logo = Image.open(HERE / "brand-src/logo.png").convert("RGBA")
+    global OUT
+    brands = sorted(p.name for p in (HERE / "brands").iterdir() if (p / "brand-src").is_dir())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("brand", choices=brands)
+    brand_dir = HERE / "brands" / parser.parse_args().brand
+    OUT = brand_dir / "overlay"
+
+    mark = load_cropped(brand_dir / "brand-src/icon.png")
+    tile = is_tile(mark)
+    if tile:
+        mark = rounded(mark)
+    logo = Image.open(brand_dir / "brand-src/logo.png").convert("RGBA")
     if OUT.exists():
         shutil.rmtree(OUT)
 
@@ -130,16 +177,17 @@ def main():
         save(square(mark, s), f"res/{name}.png")
     save(square(mark, 256), "flutter/assets/icon.png")
 
-    tile = mac_tile(mark)
-    save(tile, "res/mac-icon.png")
-    save(silhouette(mark, 60, (0, 0, 0)), "res/mac-tray-dark-x2.png")
-    save(silhouette(mark, 48, (255, 255, 255)), "res/mac-tray-light-x2.png")
+    mac = mac_framed(mark) if tile else mac_tile(mark)
+    save(mac, "res/mac-icon.png")
+    shape = glyph(mark) if tile else mark
+    save(silhouette(shape, 60, (0, 0, 0)), "res/mac-tray-dark-x2.png")
+    save(silhouette(shape, 48, (255, 255, 255)), "res/mac-tray-light-x2.png")
     with tempfile.TemporaryDirectory() as tmp:
         iconset = Path(tmp) / "AppIcon.iconset"
         iconset.mkdir()
         for s in (16, 32, 128, 256, 512):
-            scaled(tile, (s, s)).save(iconset / f"icon_{s}x{s}.png")
-            scaled(tile, (s * 2, s * 2)).save(iconset / f"icon_{s}x{s}@2x.png")
+            scaled(mac, (s, s)).save(iconset / f"icon_{s}x{s}.png")
+            scaled(mac, (s * 2, s * 2)).save(iconset / f"icon_{s}x{s}@2x.png")
         icns = OUT / "flutter/macos/Runner/AppIcon.icns"
         icns.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(icns)], check=True)

@@ -1,0 +1,10 @@
+{
+  "app_name": "UneqRemote",
+  "display_name": "UNEQ Remote",
+  "bundle_id": "de.uneq-it.remote",
+  "file_prefix": "uneq-remote",
+  "rendezvous_server": "remote.netcotel.de",
+  "server_key": "BgJP5vfhCHzI0vhXWY5Ih8sCh8Xjg7d3RCKU9blcsxg=",
+  "accent_color": "F8931F",
+  "button_color": "F8931F"
+}

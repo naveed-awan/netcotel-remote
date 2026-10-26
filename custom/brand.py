@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
-"""Turn a RustDesk checkout into the branded client described by custom/brand.json.
+"""Turn a RustDesk checkout into the branded client described by custom/brands/<brand>/brand.json.
 
 Runs in CI right after checkout (see .github/workflows/custom-build.yml), so the
 committed sources stay identical to upstream and merging upstream never conflicts.
 Every edit asserts that the text it replaces is still there; if upstream changes
 one of these spots the build fails here instead of producing a half-branded client.
 
-    python3 custom/brand.py --variant kunde    # incoming connections only
-    python3 custom/brand.py --variant admin    # full client
+    python3 custom/brand.py --brand netcotel --variant kunde    # incoming connections only
+    python3 custom/brand.py --brand uneq --variant admin        # full client
 """
 import argparse
 import json
+import os
 import re
 import shutil
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-BRAND = json.loads((HERE / "brand.json").read_text())
+BRANDS = sorted(p.name for p in (HERE / "brands").iterdir() if (p / "brand.json").is_file())
 
 
 def edit(rel, old, new, count=1, regex=False):
@@ -38,10 +39,13 @@ def rust_str(value):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--brand", choices=BRANDS, required=True)
     parser.add_argument("--variant", choices=["kunde", "admin"], required=True)
-    variant = parser.parse_args().variant
+    args = parser.parse_args()
+    variant, brand_dir = args.variant, HERE / "brands" / args.brand
+    brand = json.loads((brand_dir / "brand.json").read_text())
 
-    app, display = BRAND["app_name"], BRAND["display_name"]
+    app, display = brand["app_name"], brand["display_name"]
     if not re.fullmatch(r"[A-Za-z0-9]+", app):
         # the name is pasted unquoted into `sc create`, launchd labels and shell paths
         raise SystemExit("app_name must be alphanumeric without spaces")
@@ -51,16 +55,16 @@ def main():
     edit(cfg, 'pub static ref APP_NAME: RwLock<String> = RwLock::new("RustDesk".to_owned());',
          f"pub static ref APP_NAME: RwLock<String> = RwLock::new({rust_str(app)}.to_owned());")
     edit(cfg, r'pub const RENDEZVOUS_SERVERS: &\[&str\] = &\[[^\]]*\];',
-         f"pub const RENDEZVOUS_SERVERS: &[&str] = &[{rust_str(BRAND['rendezvous_server'])}];", regex=True)
+         f"pub const RENDEZVOUS_SERVERS: &[&str] = &[{rust_str(brand['rendezvous_server'])}];", regex=True)
     edit(cfg, r'pub const RS_PUB_KEY: &str = "[^"]*";',
-         f"pub const RS_PUB_KEY: &str = {rust_str(BRAND['server_key'])};", regex=True)
+         f"pub const RS_PUB_KEY: &str = {rust_str(brand['server_key'])};", regex=True)
 
     # Fixed settings, applied in every process before anything reads the config.
     # The address book, device groups and account login need the Pro API server.
     settings = {
         "OVERWRITE_SETTINGS": {
-            "custom-rendezvous-server": BRAND["rendezvous_server"],
-            "key": BRAND["server_key"],
+            "custom-rendezvous-server": brand["rendezvous_server"],
+            "key": brand["server_key"],
         },
         "HARD_SETTINGS": {"disable-ab": "Y", "disable-account": "Y"},
         "BUILTIN_SETTINGS": {
@@ -82,7 +86,7 @@ def main():
         f.write(f"\n// Added by custom/brand.py\nfn apply_builtin_client_config() {{\n{inserts}}}\n")
 
     # Brand colors in place of the stock blue.
-    accent, button = BRAND["accent_color"], BRAND["button_color"]
+    accent, button = brand["accent_color"], brand["button_color"]
     dart = "flutter/lib/common.dart"
     edit(dart, "static const Color accent = Color(0xFF0071FF);", f"static const Color accent = Color(0xFF{accent});")
     edit(dart, "static const Color accent50 = Color(0x770071FF);", f"static const Color accent50 = Color(0x77{accent});")
@@ -139,7 +143,7 @@ def main():
     edit("flutter/macos/Runner/Configs/AppInfo.xcconfig", "PRODUCT_NAME = RustDesk", f"PRODUCT_NAME = {app}")
     edit("flutter/macos/Runner.xcodeproj/project.pbxproj",
          "PRODUCT_BUNDLE_IDENTIFIER = com.carriez.rustdesk;",
-         f"PRODUCT_BUNDLE_IDENTIFIER = {BRAND['bundle_id']};", count=3)
+         f"PRODUCT_BUNDLE_IDENTIFIER = {brand['bundle_id']};", count=3)
     edit("flutter/macos/Runner/Info.plist",
          "<key>CFBundleName</key>\n\t<string>$(PRODUCT_NAME)</string>",
          f"<key>CFBundleName</key>\n\t<string>{display}</string>")
@@ -147,12 +151,17 @@ def main():
          f"./build/macos/Build/Products/Release/{app}.app/Contents/MacOS/")
 
     # Icons and logos.
-    for src in sorted((HERE / "overlay").rglob("*")):
+    for src in sorted((brand_dir / "overlay").rglob("*")):
         if src.is_file():
-            dst = ROOT / src.relative_to(HERE / "overlay")
+            dst = ROOT / src.relative_to(brand_dir / "overlay")
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, dst)
             print(f"copied  {dst.relative_to(ROOT)}")
+
+    # Names for the packaging steps that follow in the same CI job.
+    if os.environ.get("GITHUB_ENV"):
+        with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
+            f.write(f"BRAND_APP={app}\nBRAND_DISPLAY={display}\nBRAND_PREFIX={brand['file_prefix']}\n")
 
     print(f"branding applied: {display} ({variant})")
 
