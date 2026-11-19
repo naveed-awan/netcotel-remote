@@ -7,10 +7,11 @@
 # Tools and build trees live in $NR_BUILD_DIR (default: netcotel-build next to the repo);
 # the dmg ends up in $NR_BUILD_DIR/out/. Needs Xcode and Homebrew with
 # llvm, create-dmg, pkg-config, cmake, ninja and cocoapods.
+# The dauerhaft variant needs the access password in NR_UNATTENDED_PASSWORD.
 set -euo pipefail
 
-BRAND=${1:?usage: build-mac.sh <brand> <kunde|admin>}
-VARIANT=${2:?usage: build-mac.sh <brand> <kunde|admin>}
+BRAND=${1:?usage: build-mac.sh <brand> <kunde|admin|dauerhaft>}
+VARIANT=${2:?usage: build-mac.sh <brand> <kunde|admin|dauerhaft>}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 B=${NR_BUILD_DIR:-$(dirname "$REPO")/netcotel-build}
 

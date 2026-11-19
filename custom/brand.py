@@ -8,11 +8,16 @@ one of these spots the build fails here instead of producing a half-branded clie
 
     python3 custom/brand.py --brand netcotel --variant kunde    # incoming connections only
     python3 custom/brand.py --brand uneq --variant admin        # full client
+    NR_UNATTENDED_PASSWORD=... python3 custom/brand.py --brand netcotel --variant dauerhaft
+                                    # incoming only, preset password, no click to accept
 """
 import argparse
+import base64
+import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 from pathlib import Path
 
@@ -37,13 +42,25 @@ def rust_str(value):
     return json.dumps(value)
 
 
+def preset_password():
+    # Only a salted hash goes into the binary, in the format hbb_common checks
+    # preset passwords against; the password itself never enters the repo.
+    password = os.environ.get("NR_UNATTENDED_PASSWORD", "")
+    if len(password) < 12:
+        raise SystemExit("variant dauerhaft: set NR_UNATTENDED_PASSWORD to the access password (12+ characters)")
+    salt = secrets.token_hex(16)
+    h1 = hashlib.sha256((password + salt).encode("utf-8")).digest()
+    return {"password": "00" + base64.b64encode(h1).decode("ascii"), "salt": salt}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--brand", choices=BRANDS, required=True)
-    parser.add_argument("--variant", choices=["kunde", "admin"], required=True)
+    parser.add_argument("--variant", choices=["kunde", "admin", "dauerhaft"], required=True)
     args = parser.parse_args()
     variant, brand_dir = args.variant, HERE / "brands" / args.brand
     brand = json.loads((brand_dir / "brand.json").read_text())
+    preset = preset_password() if variant == "dauerhaft" else {}
 
     app, display = brand["app_name"], brand["display_name"]
     if not re.fullmatch(r"[A-Za-z0-9]+", app):
@@ -73,9 +90,15 @@ def main():
             "hide-powered-by-me": "Y",
         },
     }
-    if variant == "kunde":
+    if variant in ("kunde", "dauerhaft"):
         settings["HARD_SETTINGS"]["conn-type"] = "incoming"
         settings["BUILTIN_SETTINGS"]["hide-network-settings"] = "Y"
+    # Unattended access: the preset password lets us in without anyone accepting.
+    # The connection window stays visible, so the person at the PC sees the session.
+    if variant == "dauerhaft":
+        settings["HARD_SETTINGS"].update(preset)
+        settings["OVERWRITE_SETTINGS"]["approve-mode"] = "password"
+        settings["OVERWRITE_SETTINGS"]["verification-method"] = "use-permanent-password"
     inserts = "".join(
         f"    config::{target}.write().unwrap().insert({rust_str(k)}.to_owned(), {rust_str(v)}.to_owned());\n"
         for target, values in settings.items() for k, v in values.items())
@@ -98,7 +121,7 @@ def main():
 
     # Customer variant on macOS: ask for screen recording, then accessibility, on every
     # start until granted, and open the matching System Settings pane each time.
-    if variant == "kunde":
+    if variant in ("kunde", "dauerhaft"):
         home = "flutter/lib/desktop/pages/desktop_home_page.dart"
         edit(home, "  @override\n  void initState() {\n",
              "  bool _nrAskedScreen = false;\n"

@@ -8,10 +8,11 @@ Builds the committed HEAD (not uncommitted changes). The first run installs Git,
 Rust, LLVM and the Visual Studio 2022 C++ build tools with winget (confirm the UAC prompts),
 then Flutter and vcpkg into -BuildDir. A short -BuildDir avoids Windows path length limits.
 The result is <BuildDir>\out\<prefix>-<variant>-<version>-x86_64.exe.
+The dauerhaft variant needs the access password in $env:NR_UNATTENDED_PASSWORD.
 #>
 param(
     [Parameter(Mandatory)][string]$Brand,
-    [Parameter(Mandatory)][ValidateSet('kunde', 'admin')][string]$Variant,
+    [Parameter(Mandatory)][ValidateSet('kunde', 'admin', 'dauerhaft')][string]$Variant,
     [string]$BuildDir = 'C:\nr-build'
 )
 $ErrorActionPreference = 'Stop'
